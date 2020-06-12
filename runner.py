@@ -7,6 +7,9 @@ def toRedis(a,n):
     """Store given Numpy array 'a' in Redis under key 'n'"""
     r = redis.Redis(host='redis', port=6379, db=0)
 
+    if isinstance(a, str):
+        r.set(n,a)
+        return
     h, w = a.shape
     shape = struct.pack('>II',h,w)
     encoded = shape + a.tobytes()
