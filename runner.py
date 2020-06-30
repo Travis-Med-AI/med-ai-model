@@ -31,6 +31,6 @@ if __name__ == '__main__':
     file_paths = [f'images/{name}' for name in filenames]
 
     out, images = evaluate_model(file_paths)
-    if save_image:
+    if save_image and images:
         save_images(images, file_paths)
     save_output(out, eval_id)
