@@ -29,7 +29,6 @@ def stringify_outputs(out):
 if __name__ == '__main__':
     eval_id = os.getenv('ID')
     filenames = os.getenv('FILENAMES').split(',')
-    save_image = bool(os.getenv('SAVE_IMAGE'))
 
     print('filenames', filenames)
     file_paths = ['images/{name}'.format(name=name) for name in filenames]
