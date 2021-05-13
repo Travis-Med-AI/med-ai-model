@@ -1,5 +1,6 @@
 FROM python:3.8
 
-RUN pip install redis
+COPY model_requirements.txt ./
+RUN pip install -r model_requirements.txt
 WORKDIR /opt
-ADD ./* /opt/runner/
+ADD * /opt/runner/

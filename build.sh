@@ -1,3 +1,3 @@
 #!/bin/bash
 
-docker build -t tclarke104/ai-model-base:0.1 .
+docker build -t tclarke104/ai-model-base:0.2 .
