@@ -1,22 +1,38 @@
 import struct
 import os
+
+from pika import connection
 from main import evaluate_model, load_model
 import numpy as np
-from skimage import io
+import skimage
 import json
 from functools import singledispatch
 import numpy as np
-import pika, sys, os
+from contextlib import redirect_stdout
+import pika, sys, os, io
+import traceback
 
 
-def save_output(queue, ids, outputs):
-    connection = pika.BlockingConnection(pika.ConnectionParameters('rabbitmq'))
+rabbitmq_url = os.getenv('RABBITMQ_URL')
 
+model = load_model()
+
+def get_rabbit_connection():
+    if rabbitmq_url:
+        connection = pika.BlockingConnection(pika.URLParameters(rabbitmq_url))
+    else:
+        connection = pika.BlockingConnection(pika.ConnectionParameters('rabbitmq'))
+    return connection
+
+def save_output(queue, ids, outputs, type='SAVE'):
+
+    connection = get_rabbit_connection()
     channel = connection.channel()
     for id, output in zip (ids, outputs):
         message = {
             'id': id,
             'output': output,
+            'type': type
         }
 
         channel.basic_publish(exchange='',
@@ -26,7 +42,7 @@ def save_output(queue, ids, outputs):
 
 def save_images(images, file_paths):
     for image, path in zip(images, file_paths):
-        io.imsave('{path}/output.jpg'.format(path=path), image)
+        skimage.io.imsave('{path}/output.jpg'.format(path=path), image)
 
 def stringify_outputs(out):
     if out.class_probabilities:
@@ -47,21 +63,40 @@ def queue_callback(ch, method, properties, body):
     files = ['images/{name}'.format(name=name) for name in files]
 
     ids = message['ids']
-    do_inference(files, 'eval_results', ids)
+    do_inference(files, 'eval_results', ids, model)
 
 def queue_setup(queue):
-    connection = pika.BlockingConnection(pika.ConnectionParameters('rabbitmq'))
+    connection = get_rabbit_connection()
+    
     channel = connection.channel()
     channel.queue_declare(queue=queue)
 
     channel.basic_consume(queue=queue, on_message_callback=queue_callback, auto_ack=True)
     channel.start_consuming()
 
-def do_inference(files, result_queue, ids):
-    model = load_model()
-    outputs = evaluate_model(files, model)
-    outputs = [stringify_outputs(output) for output in outputs]
-    save_output(result_queue, ids, outputs)
+
+
+
+def do_inference(files, result_queue, ids, eval_model, log_queue='log_results'):
+    with io.StringIO() as buf, redirect_stdout(buf):
+        tb = ''
+        try:
+
+            outputs = evaluate_model(files, eval_model)
+            outputs = [stringify_outputs(output) for output in outputs]
+            save_output(result_queue, ids, outputs)
+            logs = [buf.getvalue() for id in ids]
+            save_output(log_queue, ids, logs ,'LOG')
+        except :
+            save_output(result_queue, ids, range(len(ids)), 'FAIL')
+            tb = traceback.format_exc()
+            logs = [buf.getvalue() for id in ids]
+            save_output(log_queue, ids, logs ,'LOG')
+            raise
+            
+
+
+
 
 if __name__ == '__main__':
     eval_id = os.getenv('ID')
@@ -89,6 +124,7 @@ if __name__ == '__main__':
 
     if run_single:
         file_paths = ['images/{name}'.format(name=name) for name in filenames]
-        do_inference(file_paths, result_queue, db_ids)
+        model = load_model()
+        do_inference(file_paths, result_queue, db_ids, model)
     else:
         queue_setup(queue)
