@@ -11,8 +11,9 @@ import numpy as np
 from contextlib import redirect_stdout
 import pika, sys, os, io
 import traceback
+import uuid
 
-
+channel = None
 rabbitmq_url = os.getenv('RABBITMQ_URL')
 
 model = load_model()
@@ -25,9 +26,7 @@ def get_rabbit_connection():
     return connection
 
 def save_output(queue, ids, outputs, type='SAVE'):
-
-    connection = get_rabbit_connection()
-    channel = connection.channel()
+    global channel
     for id, output in zip (ids, outputs):
         message = {
             'id': id,
@@ -39,10 +38,17 @@ def save_output(queue, ids, outputs, type='SAVE'):
                             routing_key=queue,
                             body=json.dumps(message))
         
+def send_start(eval_ids,queue):
+    for i in eval_ids:
+        message = {
+                'id': i,
+                'output': None,
+                'type': 'START'
+            }
 
-def save_images(images, file_paths):
-    for image, path in zip(images, file_paths):
-        skimage.io.imsave('{path}/output.jpg'.format(path=path), image)
+        channel.basic_publish(exchange='',
+                            routing_key=queue,
+                            body=json.dumps(message))
 
 def stringify_outputs(out):
     if out.class_probabilities:
@@ -64,38 +70,30 @@ def queue_callback(ch, method, properties, body):
 
     ids = message['ids']
     do_inference(files, 'eval_results', ids, model)
+    print('completing rabbit ack')
+    ch.basic_ack(delivery_tag = method.delivery_tag)
 
 def queue_setup(queue):
     connection = get_rabbit_connection()
-    
+    global channel
     channel = connection.channel()
     channel.queue_declare(queue=queue)
 
-    channel.basic_consume(queue=queue, on_message_callback=queue_callback, auto_ack=True)
+    channel.basic_consume(queue=queue, on_message_callback=queue_callback, auto_ack=False)
     channel.start_consuming()
 
-
-
-
 def do_inference(files, result_queue, ids, eval_model, log_queue='log_results'):
-    with io.StringIO() as buf, redirect_stdout(buf):
-        tb = ''
-        try:
-
-            outputs = evaluate_model(files, eval_model)
-            outputs = [stringify_outputs(output) for output in outputs]
-            save_output(result_queue, ids, outputs)
-            logs = [buf.getvalue() for id in ids]
-            save_output(log_queue, ids, logs ,'LOG')
-        except :
-            save_output(result_queue, ids, range(len(ids)), 'FAIL')
-            tb = traceback.format_exc()
-            logs = [buf.getvalue() for id in ids]
-            save_output(log_queue, ids, logs ,'LOG')
-            raise
-            
-
-
+    tb = ''
+    try:
+        send_start(ids, result_queue)
+        outputs = evaluate_model(files, eval_model)
+        outputs = [stringify_outputs(output) for output in outputs]
+        save_output(result_queue, ids, outputs)
+    except :
+        save_output(result_queue, ids, range(len(ids)), 'FAIL')
+        tb = traceback.format_exc()
+        save_output(log_queue, ids, tb ,'LOG')
+        raise
 
 
 if __name__ == '__main__':
